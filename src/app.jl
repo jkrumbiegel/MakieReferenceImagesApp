@@ -57,8 +57,8 @@ module MakieReferenceImagesApp
                 else
                     authenticate()
                     new_check_run(head_sha;
-                        name = workflow_name * " Reference Images",
-                        title = workflow_name * " Reference Images",
+                        name = workflow_run_name * " Reference Images",
+                        title = workflow_run_name * " Reference Images",
                         summary = "No reference images generated.",
                         status = "completed",
                         conclusion = "neutral",
@@ -67,8 +67,8 @@ module MakieReferenceImagesApp
             elseif data["action"] == "in_progress"
                 authenticate()
                 new_check_run(head_sha;
-                    name = workflow_name * " Reference Images",
-                    title = workflow_name * " Reference Images",
+                    name = workflow_run_name * " Reference Images",
+                    title = workflow_run_name * " Reference Images",
                     summary = "Here, the reference images with high diff scores will show up.",
                     status = "in_progress",
                 )
