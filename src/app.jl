@@ -11,7 +11,8 @@ module MakieReferenceImagesApp
     function handle_webhook(req)
         try
             if !HTTP.hasheader(req, "X-Github-Event") || HTTP.header(req, "X-Github-Event") != "workflow_job"
-                return HTTP.Response(200, "Not a workflow job.")
+                @info "Not a workflow job."
+                return HTTP.Response(200)
             end
             data = JSON3.read(req.body)
             w = data["workflow_job"]
@@ -25,11 +26,13 @@ module MakieReferenceImagesApp
             workflow_job_name = w["name"]
             # only do this for the 1.6 matrix entry (or whatever the highest stable version is)
             if !startswith(workflow_job_name, "Julia 1.6")
-                return HTTP.Response(200, "Wrong workflow job name $workflow_job_name.")
+                @info "Wrong workflow job name $workflow_job_name."
+                return HTTP.Response(200)
             end
 
             if workflow_run_name ∉ ["GLMakie CI", "CairoMakie CI"]
-                return HTTP.Response(200, "Wrong workflow run $workflow_run_name.")
+                @info "Wrong workflow run $workflow_run_name."
+                return HTTP.Response(200)
             end
 
             if data["action"] == "completed"
