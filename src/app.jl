@@ -17,8 +17,10 @@ module MakieReferenceImagesApp
             w = data["workflow_job"]
             head_sha = w["head_sha"]
             
+            @info "Getting workflow run info at $(w["url"])"
             workflow_run = JSON3.read(HTTP.get(w["url"]).body)
             workflow_run_name = workflow_run["name"]
+            @info "Workflow run name is $workflow_run_name"
 
             workflow_job_name = w["name"]
             # only do this for the 1.6 matrix entry (or whatever the highest stable version is)
