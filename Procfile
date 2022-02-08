@@ -1,1 +1,1 @@
-web: julia --project ./app.jl
+web: julia --project ./app.jl $PORT
