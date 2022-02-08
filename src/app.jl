@@ -91,7 +91,14 @@ module MakieReferenceImagesApp
     auth = Ref{Any}()
     function authenticate()
         @info "Authenticating..."
-        jwtauth = GitHub.JWTAuth(ENV["GITHUB_APP_ID"], ENV["GITHUB_APP_KEY"])
+        jwtauth = mktemp() do path, io
+            write(io, ENV["GITHUB_APP_KEY"])
+            close(io)
+            GitHub.JWTAuth(
+                parse(Int, ENV["GITHUB_APP_ID"]),
+                path
+            )
+        end
         installations = GitHub.installations(jwtauth)
         installation = installations[1][1]
         auth[] = create_access_token(installation, jwtauth)
