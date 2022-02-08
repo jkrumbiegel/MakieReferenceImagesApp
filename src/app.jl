@@ -8,10 +8,6 @@ module MakieReferenceImagesApp
 
     const ROUTER = HTTP.Router()
 
-    const GITHUB_APP_ID = ENV["GITHUB_APP_ID"]
-    const GITHUB_TARGET_REPO = ENV["GITHUB_TARGET_REPO"]
-    const GITHUB_APP_KEY = ENV["GITHUB_APP_KEY"]
-
     function handle_webhook(req)
         try
             data = JSON3.read(req.body)
@@ -35,7 +31,7 @@ module MakieReferenceImagesApp
 
     auth = Ref{Any}()
     function authenticate()
-        jwtauth = GitHub.JWTAuth(GITHUB_APP_ID, GITHUB_APP_KEY)
+        jwtauth = GitHub.JWTAuth(ENV["GITHUB_APP_ID"], ENV["GITHUB_APP_KEY"])
         installations = GitHub.installations(jwtauth)
         installation = installations[1][1]
         auth[] = create_access_token(installation, jwtauth)
@@ -45,7 +41,7 @@ module MakieReferenceImagesApp
     function new_check_run(head_sha)
         @info "Creating new check run"
         r = GitHub.create_check_run(
-            Repo(GITHUB_TARGET_REPO);
+            Repo(ENV["GITHUB_TARGET_REPO"]);
             auth = auth[],
             params = Dict(
                 "name" => "Reference Images",
