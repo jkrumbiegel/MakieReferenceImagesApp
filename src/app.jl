@@ -26,6 +26,7 @@ module MakieReferenceImagesApp
     HTTP.@register(ROUTER, "POST", "/", handle_webhook)
 
     function serve(port; socket = Sockets.localhost)
+        @info "Starting server at port $port"
         HTTP.serve(ROUTER, socket, port)
     end
 
