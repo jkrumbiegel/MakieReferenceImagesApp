@@ -12,8 +12,14 @@ module MakieReferenceImagesApp
         try
             data = JSON3.read(req.body)
             
-            workflow_run = data["workflow_run"]
-            head_sha = workflow_run["head_sha"]
+            haskey(data, "workflow_run") || error("Not a workflow run")
+            w = data["workflow_run"]
+            head_sha = w["head_sha"]
+            w["name"] == "GLMakie CI" ? @info("Correct name") : error("Incorrect name $(w["name"]).")
+            w["status"] == "completed" ? @info("Correct status") : error("Incorrect status $(w["status"])")
+            w["conclusion"] == "success" ? @info("Correct conclusion") : error("Incorrect conclusion $(w["conclusion"])")
+
+            authenticate()
             new_check_run(head_sha)
         catch e
             showerror(stdout, e, catch_backtrace())
@@ -40,7 +46,7 @@ module MakieReferenceImagesApp
     end
 
     function new_check_run(head_sha)
-        @info "Creating new check run"
+        @info "Creating new check run at $head_sha"
         r = GitHub.create_check_run(
             Repo(ENV["GITHUB_TARGET_REPO"]);
             auth = auth[],
