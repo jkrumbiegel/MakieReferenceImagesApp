@@ -1,2 +1,3 @@
 include("src/app.jl")
-MakieReferenceImagesApp.serve()
+port = parse(Int, ARGS[1]) 
+MakieReferenceImagesApp.serve(port)
