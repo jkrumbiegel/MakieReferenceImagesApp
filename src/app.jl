@@ -56,7 +56,7 @@ module MakieReferenceImagesApp
                         status = "completed",
                         conclusion = "action_required",
                     )
-                    @async download_and_extract_workflow_artifact(workflow_run["id"], workflow_run["artifacts_url"])
+                    download_and_extract_workflow_artifact(workflow_run["id"], workflow_run["artifacts_url"])
                 else
                     authenticate()
                     new_check_run(head_sha;
@@ -167,6 +167,7 @@ module MakieReferenceImagesApp
         artifact_url = a["archive_download_url"]
         @info "Downloading artifact at $artifact_url"
         zip_path = Downloads.download(artifact_url, headers = headers)
+        @info "Downloaded artifact."
 
         refimage_dir = make_refimage_dir(workflow_run_id)
         unzip(zip_path, refimage_dir)
