@@ -40,8 +40,7 @@ module MakieReferenceImagesApp
             if data["action"] == "completed"
                 has_uploaded_artifacts = false
                 for step in w["steps"]
-                    @show step
-                    if step["name"] == "Upload test Artifacts" && step["status"] == "completed" && step["conclusion"] == ["success"]
+                    if step["name"] == "Upload test Artifacts" && step["status"] == "completed" && step["conclusion"] == "success"
                         has_uploaded_artifacts = true
                         break
                     end
