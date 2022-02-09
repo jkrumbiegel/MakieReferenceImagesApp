@@ -3,6 +3,8 @@ module MakieReferenceImagesApp
     using JSON3
     using Sockets
     using GitHub
+    import Downloads
+    import ZipFile
 
     export serve
 
@@ -38,6 +40,7 @@ module MakieReferenceImagesApp
             if data["action"] == "completed"
                 has_uploaded_artifacts = false
                 for step in w["steps"]
+                    @show step
                     if step["name"] == "Upload test Artifacts" && step["status"] == "completed" && step["conclusion"] == ["success"]
                         has_uploaded_artifacts = true
                         break
@@ -54,6 +57,7 @@ module MakieReferenceImagesApp
                         status = "completed",
                         conclusion = "action_required",
                     )
+                    @async download_and_extract_workflow_artifact(workflow_run["id"], workflow_run["artifacts_url"])
                 else
                     authenticate()
                     new_check_run(head_sha;
@@ -91,6 +95,15 @@ module MakieReferenceImagesApp
     auth = Ref{Any}()
     function authenticate()
         @info "Authenticating..."
+        jwtauth = get_jwtauth()
+        installations = GitHub.installations(jwtauth)
+        installation = installations[1][1]
+        auth[] = create_access_token(installation, jwtauth)
+        @info "Authenticated successfully."
+        return
+    end
+
+    function get_jwtauth()
         jwtauth = mktemp() do path, io
             write(io, ENV["GITHUB_APP_KEY"])
             close(io)
@@ -99,11 +112,6 @@ module MakieReferenceImagesApp
                 path
             )
         end
-        installations = GitHub.installations(jwtauth)
-        installation = installations[1][1]
-        auth[] = create_access_token(installation, jwtauth)
-        @info "Authenticated successfully."
-        return
     end
 
     function new_check_run(head_sha; name, title, summary, images = [], params...)
@@ -130,4 +138,80 @@ module MakieReferenceImagesApp
         )
         return
     end
+
+    const workflow_artifactfolder = Ref{String}()
+    function artifact_folder()
+        if !isassigned(workflow_artifactfolder)
+            workflow_artifactfolder[] = mktempdir()
+        end
+        workflow_artifactfolder[]
+    end
+
+    function download_and_extract_workflow_artifact(workflow_run_id, artifacts_url; repo = ENV["GITHUB_TARGET_REPO"])
+        artifact_result = JSON3.read(HTTP.get(artifacts_url).body)
+        if artifact_result["total_count"] < 1
+            error("No reference images available.")
+        end
+        artifacts = artifact_result["artifacts"]
+        ia = findfirst(artifacts) do a
+            startswith(a["name"], "ReferenceImages") && endswith(a["name"], "1.6")
+        end
+        if ia === nothing
+            error("No reference images fitting the criteria found.")
+        end
+        a = artifacts[ia]
+
+        headers = Dict{String, String}()
+        authenticate()
+        GitHub.authenticate_headers!(headers, auth[])
+
+        artifact_url = a["archive_download_url"]
+        @info "Downloading artifact at $artifact_url"
+        zip_path = Downloads.download(artifact_url, headers = headers)
+
+        refimage_dir = make_refimage_dir(workflow_run_id)
+        unzip(zip_path, refimage_dir)
+        return refimage_dir
+    end
+
+    function make_refimage_dir(workflow_run_id)
+        path = joinpath(artifact_folder(), string(workflow_run_id))
+        if isdir(path)
+            rm(path, recursive = true)
+        end
+        mkdir(path)
+        path
+    end
+
+    function unzip(file, exdir = "")
+        @info "Extracting zip file $file"
+        fileFullPath = isabspath(file) ?  file : joinpath(pwd(),file)
+        basePath = dirname(fileFullPath)
+        outPath = (exdir == "" ? basePath : (isabspath(exdir) ? exdir : joinpath(pwd(),exdir)))
+        isdir(outPath) ? "" : mkdir(outPath)
+        zarchive = ZipFile.Reader(fileFullPath)
+        for f in zarchive.files
+            fullFilePath = joinpath(outPath,f.name)
+            if (endswith(f.name,"/") || endswith(f.name,"\\"))
+                mkdir(fullFilePath)
+            else
+                write(fullFilePath, read(f))
+            end
+        end
+        close(zarchive)
+        @info "Extracted zip file"
+    end
+    
+    function serve_artifact_files(req)
+        req.target == "/" && return HTTP.Response(404)
+        file = HTTP.unescapeuri(req.target[2:end])
+        filepath = normpath(joinpath(artifact_folder(), file))
+        # check that we don't go outside of the artifact folder
+        if !startswith(filepath, artifact_folder()) || !isfile(filepath)
+            return HTTP.Response(404)
+        end
+        return HTTP.Response(200, read(filepath))
+    end
+    
+    HTTP.@register(ROUTER, "GET", "/", serve_artifact_files)
 end
