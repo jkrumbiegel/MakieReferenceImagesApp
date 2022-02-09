@@ -48,6 +48,27 @@ module MakieReferenceImagesApp
                 @show has_uploaded_artifacts
 
                 if has_uploaded_artifacts
+                    workflow_run_id = workflow_run["id"]
+                    refimage_dir = download_and_extract_workflow_artifact(workflow_run_id)
+
+                    # this block adds the first five images to the check run for test purposes
+                    # until the recorded images store a score list
+                    i = 0
+                    pngfiles = String[]
+                    for (root, dirs, files) in walkdir(refimage_dir)
+                        for file in files
+                            i >= 5 && break
+                            endswith(file, ".png") || continue
+                            push!(pngfiles, normpath(joinpath(relpath(root, refimage_dir), file)))
+                            i += 1
+                        end
+                    end
+
+                    baseurl = "https://makie-reference-images.herokuapp.com"
+                    images = map(pngfiles) do file
+                        GitHub.Image(file, "$baseurl/$workflow_run_id/$(HTTP.URIs.escapepath(file))", "Score: NA")
+                    end
+
                     authenticate()
                     new_check_run(head_sha;
                         name = workflow_run_name * " Reference Images",
@@ -55,8 +76,8 @@ module MakieReferenceImagesApp
                         summary = "Here are the reference images that have high diff scores.",
                         status = "completed",
                         conclusion = "action_required",
+                        images = images,
                     )
-                    download_and_extract_workflow_artifact(workflow_run["id"])
                 else
                     authenticate()
                     new_check_run(head_sha;
