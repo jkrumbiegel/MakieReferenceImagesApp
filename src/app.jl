@@ -17,15 +17,15 @@ module MakieReferenceImagesApp
                 return HTTP.Response(200)
             end
             data = JSON3.read(req.body)
-            w = data["workflow_job"]
-            head_sha = w["head_sha"]
+            workflow_job = data["workflow_job"]
+            head_sha = workflow_job["head_sha"]
             
-            @info "Getting workflow run info at $(w["run_url"])"
-            workflow_run = JSON3.read(HTTP.get(w["run_url"]).body)
+            @info "Getting workflow run info at $(workflow_job["run_url"])"
+            workflow_run = JSON3.read(HTTP.get(workflow_job["run_url"]).body)
             workflow_run_name = workflow_run["name"]
             @info "Workflow run name is $workflow_run_name"
 
-            workflow_job_name = w["name"]
+            workflow_job_name = workflow_job["name"]
             # only do this for the 1.6 matrix entry (or whatever the highest stable version is)
             if !startswith(workflow_job_name, "Julia 1.6")
                 @info "Wrong workflow job name $workflow_job_name."
@@ -39,7 +39,7 @@ module MakieReferenceImagesApp
 
             if data["action"] == "completed"
                 has_uploaded_artifacts = false
-                for step in w["steps"]
+                for step in workflow_job["steps"]
                     if step["name"] == "Upload test Artifacts" && step["status"] == "completed" && step["conclusion"] == "success"
                         has_uploaded_artifacts = true
                         break
@@ -56,7 +56,7 @@ module MakieReferenceImagesApp
                         status = "completed",
                         conclusion = "action_required",
                     )
-                    download_and_extract_workflow_artifact(workflow_run["id"], workflow_run["artifacts_url"])
+                    download_and_extract_workflow_artifact(workflow_run["id"])
                 else
                     authenticate()
                     new_check_run(head_sha;
@@ -146,7 +146,11 @@ module MakieReferenceImagesApp
         workflow_artifactfolder[]
     end
 
-    function download_and_extract_workflow_artifact(workflow_run_id, artifacts_url; repo = ENV["GITHUB_TARGET_REPO"])
+    function download_and_extract_workflow_artifact(workflow_run_id; repo = ENV["GITHUB_TARGET_REPO"])
+
+        artifacts_url = "https://api.github.com/repos/$repo/actions/runs/$workflow_run_id/artifacts"
+
+        @info "Getting artifacts from $artifacts_url"
         artifact_result = JSON3.read(HTTP.get(artifacts_url).body)
         if artifact_result["total_count"] < 1
             error("No reference images available.")
@@ -207,10 +211,34 @@ module MakieReferenceImagesApp
         file = HTTP.unescapeuri(req.target[2:end])
         filepath = normpath(joinpath(artifact_folder(), file))
         # check that we don't go outside of the artifact folder
-        if !startswith(filepath, artifact_folder()) || !isfile(filepath)
+        if !startswith(filepath, artifact_folder())
+            @info "$file leads to $filepath which is outside of the artifact folder."
             return HTTP.Response(404)
         end
-        return HTTP.Response(200, read(filepath))
+
+        rel = relpath(filepath, artifact_folder())
+        run_id_str = splitpath(rel)[1]
+        run_id = tryparse(Int, run_id_str)
+
+        if run_id === nothing
+            @info "$run_id_str can't be parsed into an integer run id"
+            return HTTP.Response(404)
+        end
+
+        if !isdir(joinpath(artifact_folder(), run_id_str))
+            @info "Requested file from run $run_id_str which doesn't exist on disk yet. Downloading reference images..."
+            download_and_extract_workflow_artifact(run_id)
+        else
+            @info "Folder $run_id_str exists."
+        end
+
+        if !isfile(filepath)
+            @info "$filepath does not exist."
+            return HTTP.Response(404)
+        else
+            @info "$filepath exists."
+            return HTTP.Response(200, read(filepath))
+        end
     end
     
     HTTP.@register(ROUTER, "GET", "/", serve_artifact_files)
