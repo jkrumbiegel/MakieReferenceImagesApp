@@ -49,7 +49,27 @@ module MakieReferenceImagesApp
 
                 if has_uploaded_artifacts
                     workflow_run_id = workflow_run["id"]
-                    refimage_dir = download_and_extract_workflow_artifact(workflow_run_id)
+
+                    a = nothing
+                    for attempt in 1:10
+                        @info "Attempt $attempt to get artifact."
+                        as = get_artifacts_list(workflow_run_id)
+                        if isempty(as)
+                            @info "No artifacts found on attempt $attempt. Retyring in 60 seconds."
+                            sleep(60)
+                            continue
+                        else
+                            a = get_right_artifact(as)
+                            if a === nothing
+                                error("Artifacts found, but not the right artifact, instead:\n $as.")
+                            else
+                                @info "Artifact found"
+                                break
+                            end
+                        end
+                    end
+
+                    refimage_dir = download_and_extract_workflow_artifact(a)
 
                     # this block adds the first five images to the check run for test purposes
                     # until the recorded images store a score list
@@ -167,29 +187,28 @@ module MakieReferenceImagesApp
         workflow_artifactfolder[]
     end
 
-    function download_and_extract_workflow_artifact(workflow_run_id; repo = ENV["GITHUB_TARGET_REPO"])
-
+    function get_artifacts_list(workflow_run_id; repo = ENV["GITHUB_TARGET_REPO"])
         artifacts_url = "https://api.github.com/repos/$repo/actions/runs/$workflow_run_id/artifacts"
+        @info "Getting artifact info from $artifacts_url"
+        artifact_info = JSON3.read(HTTP.get(artifacts_url).body)
+        artifact_info["artifacts"]
+    end
 
-        @info "Getting artifacts from $artifacts_url"
-        artifact_result = JSON3.read(HTTP.get(artifacts_url).body)
-        if artifact_result["total_count"] < 1
-            error("No reference images available.")
-        end
-        artifacts = artifact_result["artifacts"]
+    function get_right_artifact(artifacts)
         ia = findfirst(artifacts) do a
             startswith(a["name"], "ReferenceImages") && endswith(a["name"], "1.6")
         end
-        if ia === nothing
-            error("No reference images fitting the criteria found.")
-        end
-        a = artifacts[ia]
+
+        ia === nothing ? nothing : artifacts[ia]
+    end
+
+    function download_and_extract_workflow_artifact(artifact)
 
         headers = Dict{String, String}()
         authenticate()
         GitHub.authenticate_headers!(headers, auth[])
 
-        artifact_url = a["archive_download_url"]
+        artifact_url = artifact["archive_download_url"]
         @info "Downloading artifact at $artifact_url"
         zip_path = Downloads.download(artifact_url, headers = headers)
         @info "Downloaded artifact."
@@ -248,7 +267,11 @@ module MakieReferenceImagesApp
 
         if !isdir(joinpath(artifact_folder(), run_id_str))
             @info "Requested file from run $run_id_str which doesn't exist on disk yet. Downloading reference images..."
-            download_and_extract_workflow_artifact(run_id)
+            as = get_artifacts_list(run_id)
+            isempty(as) && error("No artifacts available")
+            a = get_right_artifact(as)
+            a === nothing && error("Artifacts available, but not the right artifact.")
+            download_and_extract_workflow_artifact(a)
         else
             @info "Folder $run_id_str exists."
         end
