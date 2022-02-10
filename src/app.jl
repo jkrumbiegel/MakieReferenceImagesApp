@@ -12,117 +12,79 @@ module MakieReferenceImagesApp
 
     function handle_webhook(req)
         try
-            if !HTTP.hasheader(req, "X-Github-Event") || HTTP.header(req, "X-Github-Event") != "workflow_job"
-                @info "Not a workflow job."
+            if !HTTP.hasheader(req, "X-Github-Event") || HTTP.header(req, "X-Github-Event") != "workflow_run"
+                @info "Ignoring event that is not a workflow run."
                 return HTTP.Response(200)
             end
             data = JSON3.read(req.body)
-            workflow_job = data["workflow_job"]
-            head_sha = workflow_job["head_sha"]
+            workflow_run = data["workflow_run"]
+            head_sha = workflow_run["head_sha"]
             
-            @info "Getting workflow run info at $(workflow_job["run_url"])"
-            workflow_run = JSON3.read(HTTP.get(workflow_job["run_url"]).body)
             workflow_run_name = workflow_run["name"]
-            @info "Workflow run name is $workflow_run_name"
-
-            workflow_job_name = workflow_job["name"]
-            # only do this for the 1.6 matrix entry (or whatever the highest stable version is)
-            if !startswith(workflow_job_name, "Julia 1.6")
-                @info "Wrong workflow job name $workflow_job_name."
-                return HTTP.Response(200)
-            end
 
             if workflow_run_name ∉ ["GLMakie CI", "CairoMakie CI"]
-                @info "Wrong workflow run $workflow_run_name."
+                @info "Ignoring workflow run $workflow_run_name."
+                return HTTP.Response(200)
+            else
+                @info "Processing workflow run $workflow_run_name"
+            end
+
+            if data["action"] != "completed"
+                @info "Ignoring workflow run that is not completed."
                 return HTTP.Response(200)
             end
 
-            if data["action"] == "completed"
-                has_uploaded_artifacts = false
-                for step in workflow_job["steps"]
-                    if step["name"] == "Upload test Artifacts" && step["status"] == "completed" && step["conclusion"] == "success"
-                        has_uploaded_artifacts = true
-                        break
-                    end
+            workflow_run_id = workflow_run["id"]
+
+            artifacts = get_artifacts_list(workflow_run_id)
+            if isempty(artifacts)
+                error("No artifacts for workflow $workflow_run_id.")
+            end
+
+            artifact = get_right_artifact(artifacts)
+            if artifact === nothing
+                error("Artifacts found, but not the right artifact, instead:\n $artifacts.")
+            end
+
+            refimage_dir = download_and_extract_workflow_artifact(artifact, workflow_run_id)
+
+            # this block adds the first five images to the check run for test purposes
+            # until the recorded images store a score list
+            i = 0
+            pngfiles = String[]
+            for (root, dirs, files) in walkdir(refimage_dir)
+                for file in files
+                    i >= 5 && break
+                    endswith(file, ".png") || continue
+                    push!(pngfiles, normpath(joinpath(relpath(root, refimage_dir), file)))
+                    i += 1
                 end
-                @show has_uploaded_artifacts
+            end
 
-                if has_uploaded_artifacts
-                    workflow_run_id = workflow_run["id"]
-
-                    a = nothing
-                    for attempt in 1:10
-                        @info "Attempt $attempt to get artifact."
-                        as = get_artifacts_list(workflow_run_id)
-                        if isempty(as)
-                            @info "No artifacts found on attempt $attempt. Retyring in 60 seconds."
-                            sleep(60)
-                            continue
-                        else
-                            a = get_right_artifact(as)
-                            if a === nothing
-                                error("Artifacts found, but not the right artifact, instead:\n $as.")
-                            else
-                                @info "Artifact found"
-                                break
-                            end
-                        end
-                    end
-
-                    refimage_dir = download_and_extract_workflow_artifact(a)
-
-                    # this block adds the first five images to the check run for test purposes
-                    # until the recorded images store a score list
-                    i = 0
-                    pngfiles = String[]
-                    for (root, dirs, files) in walkdir(refimage_dir)
-                        for file in files
-                            i >= 5 && break
-                            endswith(file, ".png") || continue
-                            push!(pngfiles, normpath(joinpath(relpath(root, refimage_dir), file)))
-                            i += 1
-                        end
-                    end
-
-                    baseurl = "https://makie-reference-images.herokuapp.com"
-                    images = map(pngfiles) do file
-                        GitHub.Image(file, "$baseurl/$workflow_run_id/$(HTTP.URIs.escapepath(file))", "Score: NA")
-                    end
-
-                    authenticate()
-                    new_check_run(head_sha;
-                        name = workflow_run_name * " Reference Images",
-                        title = workflow_run_name * " Reference Images",
-                        summary = "Here are the reference images that have high diff scores.",
-                        status = "completed",
-                        conclusion = "action_required",
-                        images = images,
-                    )
-                else
-                    authenticate()
-                    new_check_run(head_sha;
-                        name = workflow_run_name * " Reference Images",
-                        title = workflow_run_name * " Reference Images",
-                        summary = "No reference images generated.",
-                        status = "completed",
-                        conclusion = "neutral",
-                    )
-                end
-            elseif data["action"] == "in_progress"
-                authenticate()
-                new_check_run(head_sha;
-                    name = workflow_run_name * " Reference Images",
-                    title = workflow_run_name * " Reference Images",
-                    summary = "Here, the reference images with high diff scores will show up.",
-                    status = "in_progress",
+            baseurl = "https://makie-reference-images.herokuapp.com"
+            images = map(pngfiles) do file
+                GitHub.Image(
+                    file,
+                    "$baseurl/$workflow_run_id/$(HTTP.URIs.escapepath(file))",
+                    "Random score: $(round(rand(), digits = 3))"
                 )
             end
+
+            authenticate()
+            new_check_run(head_sha;
+                name = workflow_run_name * " Reference Images",
+                title = workflow_run_name * " Reference Images",
+                summary = "Here are the reference images that have high diff scores.",
+                status = "completed",
+                conclusion = "action_required",
+                images = images,
+            )
         catch e
             showerror(stdout, e, catch_backtrace())
             println()
             return HTTP.Response(200, "Something went wrong.")
         end
-        return HTTP.Response(200, "Ok.")
+        return HTTP.Response(200)
     end
 
     HTTP.@register(ROUTER, "POST", "/", handle_webhook)
@@ -202,7 +164,7 @@ module MakieReferenceImagesApp
         ia === nothing ? nothing : artifacts[ia]
     end
 
-    function download_and_extract_workflow_artifact(artifact)
+    function download_and_extract_workflow_artifact(artifact, workflow_run_id)
 
         headers = Dict{String, String}()
         authenticate()
@@ -271,7 +233,7 @@ module MakieReferenceImagesApp
             isempty(as) && error("No artifacts available")
             a = get_right_artifact(as)
             a === nothing && error("Artifacts available, but not the right artifact.")
-            download_and_extract_workflow_artifact(a)
+            download_and_extract_workflow_artifact(a, run_id)
         else
             @info "Folder $run_id_str exists."
         end
